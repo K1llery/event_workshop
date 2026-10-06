@@ -14,3 +14,5 @@
 本项目不依赖 MCM 的保存功能，使用模组自身的 SaveData 保存配置及局内状态。默认示例规则均禁用。
 
 忏悔+ 原生控制台入口：`lua EW("help")`、`lua EW("status")`。触发事件在 MCM“条件”页设置。
+
+创意工坊发布素材位于 [workshop](workshop)。运行 `python3 tools/prepare_workshop.py` 可生成独立的隐藏上传目录；操作步骤见 [上传步骤](workshop/上传步骤.md)。已有创意工坊条目 ID 与上传修订号会保留。

@@ -1,0 +1,51 @@
+[h1]事件工坊 · Event Workshop[/h1]
+为《以撒的结合：忏悔+》单人游戏自定义“发生什么事件，就执行什么动作”。
+
+例如：清理房间后生成一个道具底座；每击杀 3 个敌人获得金币；进入新楼层时追加奖励。支持一条规则按顺序执行多个动作。
+
+[h2]功能[/h2]
+[list]
+[*]触发事件：清房、进入房间、进入新楼层、本局首次启用、玩家受伤回调、敌人死亡、使用主动道具。
+[*]条件：执行概率、每几次符合条件时执行、房间类型、角色、持有道具，以及每房间／每层／每局次数上限。
+[*]动作：生成道具底座或掉落物、直接给予道具、增减金币／钥匙／炸弹、调整生命或主动充能、生成指定原版敌人。
+[*]多个配置方案、规则复制、多动作排序、自动保存、道具名称／ID 搜索。
+[*]附带清房生成随机底座、清房不充能、开局金币、受伤金币等预设；新建及预设规则默认禁用。
+[/list]
+
+[h2]使用方法[/h2]
+推荐安装 [url=https://steamcommunity.com/sharedfiles/filedetails/?id=2494192799]Mod Config Menu Chinese[/url]。MCM 是可选的界面支持；没有 MCM 时仍可通过控制台配置。无需 REPENTOGON（忏悔龙）。
+
+1. 订阅后重新启动游戏，在 Mods 中启用 Event Workshop。
+2. 进入单人游戏，按 F10 或你的 MCM 快捷键，打开“事件工坊 Event Workshop”。
+3. 在“规则”中选择并启用规则；在“条件”设置事件及条件；在“动作”设置效果。
+4. 在“运行”中开启“本局运行规则”总开关。
+
+[b]每次新局或 R 重开，总开关都会自动关闭，必须手动启动；配置和各规则的启用状态保留。[/b]继续游戏会恢复这一局的开关和执行次数。首次启动的开局事件只在当前局补触发一次，不会更换种子、重开游戏或重置房间。
+
+[h2]控制台[/h2]
+启用游戏自带调试控制台后，使用内置 lua 命令：
+[code]
+lua EW("help")
+lua EW("status")
+lua EW("list")
+lua EW("selftest")
+[/code]
+help 查看全部命令；status 查询本局状态；selftest 运行隔离逻辑测试。重命名、搜索、导入和导出也支持控制台。
+
+[h2]兼容范围[/h2]
+[list]
+[*]目标版本：Repentance+；初版仅支持单人游戏，检测到合作玩家时停止执行。
+[*]只追加行为，不取消原版清房奖励、出口或完成标记。“清房不充能”通过事后扣除观察到的普通主动充能增量实现；不处理计时及特殊充能。
+[*]原版 API 无法准确区分其他模组在同一时段追加的充能；受伤回调也不保证玩家最终损失生命。
+[*]延迟执行前若已离开事件所在房间，会丢弃这次事件，避免在新房间生成旧房间的奖励。
+[*]支持其他模组注册的非隐藏道具；如安装 EID，可使用其名称翻译。
+[/list]
+
+当前功能版本：1.0.2。反馈问题时请附功能版本、规则设置及游戏日志中 [EventWorkshop] 的相关行。
+
+[h2]English[/h2]
+Event Workshop is a configurable event-and-action mod for single-player Repentance+. Create rules for room clears, entering rooms or floors, first activation in a run, damage callbacks, enemy deaths, and active item use.
+
+Filter by chance, occurrence count, room type, character, held collectible, and per-room/floor/run limits. Add ordered actions to spawn pickups or collectible pedestals, grant collectibles, adjust resources, health or active charge, and spawn selected vanilla enemies.
+
+Mod Config Menu provides the editor; the native console also works with lua EW("help"). REPENTOGON is not required. The master switch starts OFF on every new run. First activation never changes the current seed or restarts the run. Multiplayer is not supported in this release.
