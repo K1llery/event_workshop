@@ -1,12 +1,15 @@
 return function(C, S, E, A, T, M, json, selftest)
     local K = {}
-    local function out(message) Isaac.ConsoleOutput("[事件工坊] " .. tostring(message) .. "\n") end
+    local function out(message)
+        Isaac.ConsoleOutput("[事件工坊] " .. tostring(message) .. "\n")
+        A.log("CONSOLE " .. tostring(message))
+    end
     local function selected(id)
         id = tonumber(id)
         for i, rule in ipairs(T:profile().rules) do
             if rule.id == id then T.selectedRule, T.selectedAction = i, 1; return rule end
         end
-        error("当前方案没有此规则 ID；ew list 查看列表")
+        error('当前方案没有此规则 ID；lua EW("list") 查看列表')
     end
     local function split(input)
         local words = {}
@@ -22,14 +25,15 @@ return function(C, S, E, A, T, M, json, selftest)
         if tonumber(value) then return integer(value) end
         local matches = A.searchItems(value)
         if #matches == 1 then return matches[1] end
-        error("道具名称匹配 " .. #matches .. " 项；使用 ew search 后填写道具 ID")
+        error("道具名称匹配 " .. #matches .. " 项；使用 search 搜索后填写道具 ID")
     end
     function K.run(args)
         local command, rest = args:match("^%s*(%S+)%s*(.-)%s*$")
         command = command and command:lower() or "help"
         local w = split(rest or "")
         if command == "help" then
-            out([[ew on | off | status | list
+            out('忏悔+ 原生控制台入口：lua EW("命令参数")；例如 lua EW("status")')
+            local help = [[ew on | off | status | list
 ew new [事件名称] | preset <预设名称> | select <规则ID>
 ew enable <规则ID> on|off | rename <规则ID> <名称>
 ew event <规则ID> <事件> | copy <规则ID> | delete <规则ID>
@@ -43,8 +47,12 @@ ew export | import <JSON> | selftest
 动作：spawn_collectible spawn_pickup give_collectible coins keys bombs hearts charge spawn_enemy undo_clear_charge
 条件：chance every roomType character collectible maxRoom maxFloor maxRun
 预设：clear_pedestal no_clear_charge start_coins damage_coin
-示例：ew preset clear_pedestal → ew list → ew enable 3 on → ew on
-详细字段和限制见项目 docs/使用说明.md。]])
+详细字段和限制见项目 docs/使用说明.md。]]
+            for line in help:gmatch("[^\n]+") do
+                if line:sub(1, 3) == "ew " then line = "lua EW(" .. string.format("%q", line:sub(4)) .. ")" end
+                out(line)
+            end
+            out('示例：lua EW("preset clear_pedestal")，随后 list 查看 ID，enable ID on 启用，on 启动本局。')
         elseif command == "status" then
             out("方案：" .. T:profile().name .. "；规则数：" .. #T:profile().rules)
             out(E.ready and E.run and ("总开关：" .. tostring(E.run.master)
@@ -59,12 +67,12 @@ ew export | import <JSON> | selftest
                     .. r.name .. " | " .. r.event .. " | 动作数=" .. #r.actions)
             end
         elseif command == "new" then
-            if w[1] and not C.contains(C.events, w[1]) then error("未知事件，ew help 查看列表") end
+            if w[1] and not C.contains(C.events, w[1]) then error('未知事件；lua EW("help") 查看列表') end
             if not T:newRule() then out(T.status); return end
             if w[1] then T:rule().event = w[1]; T:changed() end
             out("当前规则 ID=" .. T:rule().id .. "；默认禁用")
         elseif command == "preset" then
-            if not C.contains(C.presets, w[1]) then error("未知预设，ew help 查看列表") end
+            if not C.contains(C.presets, w[1]) then error('未知预设；lua EW("help") 查看列表') end
             T:newRule(w[1]); out(T.status)
         elseif command == "select" then
             out("已选择：" .. selected(w[1]).name)
@@ -73,7 +81,7 @@ ew export | import <JSON> | selftest
             selected(w[1]).enabled = w[2] == "on"; T:changed(); out(T.status)
         elseif command == "rename" then
             local id, name = rest:match("^(%d+)%s+(.+)$")
-            if not name then error("ew rename <规则ID> <名称>") end
+            if not name then error('lua EW("rename <规则ID> <名称>")') end
             local r = selected(id)
             r.name = S.rule({ name = name }, r.id).name
             T:changed(); out(T.status)
@@ -107,7 +115,7 @@ ew export | import <JSON> | selftest
             local r = selected(w[1]); local n = integer(w[2])
             if n < 1 or n > #r.actions then error("动作序号不存在") end
             local key, value = w[3], rest:match("^%S+%s+%S+%s+%S+%s+(.+)$")
-            if not key or r.actions[n][key] == nil or not value then error("ew action <ID> <序号> <字段> <值>") end
+            if not key or r.actions[n][key] == nil or not value then error('lua EW("action <ID> <序号> <字段> <值>")') end
             if key == "kind" or key == "heartType" then
                 if not C.contains(key == "kind" and C.actions or C.hearts, value) then error("未知选项") end
             else value = key == "itemId" and itemID(value) or integer(value) end
@@ -142,7 +150,7 @@ ew export | import <JSON> | selftest
                 local copy = S.copy(E.config); S.profile(copy).name = name
                 T:profile().name = S.profile(S.config(copy)).name
                 T:changed(); out(T.status)
-            else error("ew profile list|new|copy|delete|select <序号>|rename <名称>") end
+            else error('lua EW("profile list|new|copy|delete|select <序号>|rename <名称>")') end
         elseif command == "export" then
             local output = json.encode(E.config)
             Isaac.ConsoleOutput(output .. "\n"); A.log("EXPORT " .. output)
@@ -153,12 +161,19 @@ ew export | import <JSON> | selftest
             out(T.status); M:search(M.query)
         elseif command == "selftest" then
             out("纯逻辑自检通过：" .. selftest() .. " 项；未修改当前局、配置或种子")
-        else error("未知命令；ew help 查看帮助") end
+        else error('未知命令；lua EW("help") 查看帮助') end
+    end
+    function K.execute(args)
+        local ok, err = pcall(function()
+            if args ~= nil and type(args) ~= "string" then error('使用 lua EW("命令参数")，参数必须是字符串') end
+            K.run(args or "")
+        end)
+        if not ok then out("错误：" .. tostring(err)) end
+        -- 两种入口均不返回值，避免原版 MC_EXECUTE_CMD 的返回值崩溃问题。
     end
     function K.callback(_, command, args)
-        if command:lower() ~= "ew" then return end
-        local ok, err = pcall(K.run, args or "")
-        if not ok then out("错误：" .. tostring(err)) end
+        if type(command) ~= "string" or command:lower() ~= "ew" then return end
+        K.execute(args)
     end
     return K
 end

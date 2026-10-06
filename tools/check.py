@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     library = ctypes.util.find_library("lua5.3") or ctypes.util.find_library("lua5.4")
     if not library:
-        print("未找到 Lua 5.3/5.4 动态库；可以在游戏控制台执行 ew selftest。")
+        print("未找到 Lua 5.3/5.4 动态库；可以在游戏控制台执行 lua EW('selftest')。")
         return 2
     lua = ctypes.CDLL(library)
     lua.luaL_newstate.restype = ctypes.c_void_p
@@ -50,6 +50,8 @@ def main() -> int:
             raise RuntimeError("metadata.xml directory 必须与模组安装目录一致")
         if not any(tag.get("id") == "Lua" for tag in metadata.findall("tag")):
             raise RuntimeError("metadata.xml 缺少本项目要求的 Lua 标签")
+        if metadata.findtext("version") != "1.0.1":
+            raise RuntimeError("metadata.xml 安装版本须保持本机已验证的 1.0.1；发行版本使用 catalog.lua 的 C.version")
         print(f"Lua 语法检查通过：{len(files)} 个文件（{library}）；metadata.xml 解析通过", flush=True)
         import os
         os.chdir(ROOT)

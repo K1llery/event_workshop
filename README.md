@@ -12,3 +12,5 @@
 - 安装并打包：python3 tools/deploy.py
 
 本项目不依赖 MCM 的保存功能，使用模组自身的 SaveData 保存配置及局内状态。默认示例规则均禁用。
+
+忏悔+ 原生控制台入口：`lua EW("help")`、`lua EW("status")`。触发事件在 MCM“条件”页设置。

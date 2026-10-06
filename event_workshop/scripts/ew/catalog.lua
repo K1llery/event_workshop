@@ -1,4 +1,5 @@
 local C = {}
+C.version = "1.0.2"
 C.events = {
     { "room_clear", "清理房间" }, { "new_room", "进入房间" },
     { "new_level", "进入新楼层" }, { "run_start", "开局（首次启用时）" },

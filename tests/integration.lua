@@ -6,6 +6,29 @@ end
 test("真实游戏 JSON 和枚举可加载", function()
     assert(RoomType.ROOM_PLANETARIUM == 24 and EntityType.ENTITY_SPIDER == 85)
 end)
+test("原生 lua 控制台入口可执行、捕获错误且不改存档", function()
+    local stored, seed = G.stored, G.seed
+    local before = #G.output
+    G.consoleInput("ew help")
+    assert(#G.output == before + 1 and G.output[#G.output]:find("Unknown command", 1, true))
+    assert(G.command("help"):find('lua EW("status")', 1, true))
+    assert(G.command("  STATUS  "):find("尚未进入游戏", 1, true))
+    assert(G.stored == stored and G.seed == seed)
+    assert(EW({}) == nil and G.output[#G.output]:find("参数必须是字符串", 1, true))
+    assert(EW("unknown") == nil and G.output[#G.output]:find("未知命令", 1, true))
+    assert(G.stored == stored and G.seed == seed)
+end)
+test("原生 lua 控制台可重命名并保存含空格的名称", function()
+    G.command("rename 1 clear reward")
+    assert(G.saved().config.profiles[1].rules[1].name == "clear reward")
+end)
+test("支持转交命令的控制台保留 EW 回调且无返回值", function()
+    local before = #G.output
+    assert(G.fire(ModCallbacks.MC_EXECUTE_CMD, "EW", "help") == nil)
+    assert(#G.output > before)
+    before = #G.output
+    assert(G.fire(ModCallbacks.MC_EXECUTE_CMD, "other", "help") == nil and #G.output == before)
+end)
 test("首次进入不补执行开局、进房、进层", function()
     G.start(); assert(G.saved().run.master == false and #G.spawned == 0)
 end)
@@ -98,7 +121,11 @@ test("MCM 页面显示、动态范围和参数编辑", function()
     for _, rows in pairs(G.rows) do
         for _, row in ipairs(rows) do
             local value = type(row.Display) == "function" and row.Display() or row.Display
-            assert(type(value) == "string")
+            assert(row.Type == 2 or type(value) == "string")
+            if value then
+                assert(not value:find("：", 1, true) and not value:find("（", 1, true),
+                    "本机 MCM 字体缺少全角冒号和括号")
+            end
             if row.CurrentSetting then
                 local setting = row.CurrentSetting()
                 assert(type(setting) == "number" or type(setting) == "boolean")
@@ -110,7 +137,19 @@ test("MCM 页面显示、动态范围和参数编辑", function()
     for _, tab in ipairs({ "运行", "规则", "条件", "动作", "道具", "预设" }) do
         assert(G.rows[tab] and #G.rows[tab] > 0, "缺少菜单页面：" .. tab)
     end
-    local ruleOn = G.rows["规则"][3]
+    local ruleOn
+    for _, row in ipairs(G.rows["规则"]) do
+        if row.Type == 4 then ruleOn = row end
+        local label = type(row.Display) == "function" and row.Display() or row.Display or ""
+        assert(not label:find("触发事件", 1, true), "事件设置应在条件页")
+    end
+    local eventFound, cadenceFound = false, false
+    for _, row in ipairs(G.rows["条件"]) do
+        local label = type(row.Display) == "function" and row.Display() or row.Display or ""
+        if label:find("触发事件: ", 1, true) then eventFound = true end
+        if label:find("每 1 次符合条件时执行", 1, true) then cadenceFound = true end
+    end
+    assert(eventFound and cadenceFound)
     assert(ruleOn.Type == 4); ruleOn.OnChange(false)
     assert(G.saved().config.profiles[1].rules[9].enabled == false)
 end)
@@ -168,7 +207,7 @@ test("错误导入拒绝未知动作且保留当前配置", function()
     local raw = G.json.decode(G.command("export"))
     raw.profiles[1].rules[1].actions[1].kind = "not_supported"
     local outputCount = #G.output
-    G.fire(ModCallbacks.MC_EXECUTE_CMD, "ew", "import " .. G.json.encode(raw))
+    G.consoleInput("lua EW(" .. string.format("%q", "import " .. G.json.encode(raw)) .. ")")
     assert(G.output[outputCount + 1]:find("错误：", 1, true) and G.stored == before)
 end)
 test("无 MCM 时仍可加载和操作控制台", function()
@@ -181,5 +220,17 @@ test("带合法 JSON 的损坏存档不会阻止模组加载", function()
     G.stored = '{"config":3,"run":false}'
     G.reload(); G.start(false)
     assert(G.saved().config.profiles[1].rules[1].enabled == false)
+end)
+test("卸载时只清理本模组拥有的控制台入口", function()
+    local entry = EW
+    G.fire(ModCallbacks.MC_PRE_MOD_UNLOAD, {})
+    assert(EW == entry)
+    local other = function() end
+    EW = other
+    G.fire(ModCallbacks.MC_PRE_MOD_UNLOAD, G.mod)
+    assert(EW == other)
+    EW = entry
+    G.fire(ModCallbacks.MC_PRE_MOD_UNLOAD, G.mod)
+    assert(EW == nil)
 end)
 print("回调、MCM、控制台、存档模拟集成测试通过：" .. passed .. " 项")

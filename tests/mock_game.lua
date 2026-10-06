@@ -97,6 +97,9 @@ ModConfigMenu = {
     AddText = function(category, tab, label)
         return ModConfigMenu.AddSetting(category, tab, { Type = 1, Display = label, NoCursorHere = true })
     end,
+    AddSpace = function(category, tab)
+        return ModConfigMenu.AddSetting(category, tab, { Type = 2 })
+    end,
 }
 G.rows = rows
 function RegisterMod(name)
@@ -130,9 +133,18 @@ function G.tick()
     G.frame = G.frame + 1
     G.fire(ModCallbacks.MC_POST_UPDATE)
 end
+function G.consoleInput(input)
+    local command, args = input:match("^(%S+)%s*(.*)$")
+    if command == "lua" then
+        assert(load(args))()
+    else
+        -- 模拟本机忏悔+ 原生控制台：未知命令不会转交 MC_EXECUTE_CMD。
+        G.output[#G.output + 1] = "Unknown command: " .. tostring(command) .. "\n"
+    end
+end
 function G.command(cmd)
     local before = #G.output
-    G.fire(ModCallbacks.MC_EXECUTE_CMD, "ew", cmd)
+    G.consoleInput("lua EW(" .. string.format("%q", cmd) .. ")")
     local result = table.concat(G.output, "", before + 1)
     assert(not result:find("错误：", 1, true), result)
     return result

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import shutil
 import xml.etree.ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -14,7 +15,12 @@ SOURCE = ROOT / "event_workshop"
 
 
 def build() -> Path:
-    version = ET.parse(SOURCE / "metadata.xml").findtext("version")
+    # 本机原生启用状态会受 metadata 版本变动影响，发行版本独立存放。
+    catalog = (SOURCE / "scripts" / "ew" / "catalog.lua").read_text(encoding="utf-8")
+    match = re.search(r'^C\.version = "(\d+\.\d+\.\d+)"$', catalog, re.MULTILINE)
+    if not match:
+        raise ValueError("catalog.lua 缺少合法的 C.version 发行版本")
+    version = match.group(1)
     archive = ROOT / "dist" / f"event_workshop-{version}.zip"
     archive.parent.mkdir(exist_ok=True)
     with ZipFile(archive, "w", ZIP_DEFLATED) as output:

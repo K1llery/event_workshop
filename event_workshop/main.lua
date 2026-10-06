@@ -10,6 +10,8 @@ T:load()
 local selftest = include("scripts/ew/selftest")(C, S, makeEngine)
 local M = include("scripts/ew/menu")(C, S, E, A, T, json, selftest)
 local K = include("scripts/ew/console")(C, S, E, A, T, M, json, selftest)
+-- 原生忏悔+ 1.9.7.17 的控制台不转交裸自定义命令，使用内置 lua 命令进入。
+EW = K.execute
 
 local queue, lastClear = {}, nil
 local function captureAll()
@@ -99,4 +101,7 @@ mod:AddCallback(ModCallbacks.MC_POST_GAME_END, function()
     T:save()
 end)
 mod:AddCallback(ModCallbacks.MC_EXECUTE_CMD, K.callback)
-A.log("1.0.1 已加载；使用 MCM 或 ew help 配置；无 REPENTOGON 依赖")
+mod:AddCallback(ModCallbacks.MC_PRE_MOD_UNLOAD, function(_, unloaded)
+    if unloaded == mod and EW == K.execute then EW = nil end
+end)
+A.log(C.version .. ' 已加载；使用 MCM 或 lua EW("help") 配置；无 REPENTOGON 依赖')
