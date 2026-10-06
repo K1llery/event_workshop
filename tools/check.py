@@ -6,6 +6,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 from pathlib import Path
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -40,7 +41,15 @@ def main() -> int:
             if lua.luaL_loadfilex(state, str(path).encode(), None):
                 raise RuntimeError(lua.lua_tolstring(state, -1, None).decode())
             lua.lua_settop(state, 0)
-        ET.parse(ROOT / "event_workshop" / "metadata.xml")
+        metadata = ET.parse(ROOT / "event_workshop" / "metadata.xml").getroot()
+        source = (ROOT / "event_workshop" / "main.lua").read_text(encoding="utf-8")
+        registration = re.search(r'RegisterMod\("([^"]+)"', source)
+        if not registration or metadata.findtext("name") != registration.group(1):
+            raise RuntimeError("metadata.xml 名称必须与 RegisterMod 名称一致")
+        if metadata.findtext("directory") != "event_workshop":
+            raise RuntimeError("metadata.xml directory 必须与模组安装目录一致")
+        if not any(tag.get("id") == "Lua" for tag in metadata.findall("tag")):
+            raise RuntimeError("metadata.xml 缺少本项目要求的 Lua 标签")
         print(f"Lua 语法检查通过：{len(files)} 个文件（{library}）；metadata.xml 解析通过", flush=True)
         import os
         os.chdir(ROOT)

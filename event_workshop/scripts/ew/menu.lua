@@ -63,7 +63,7 @@ return function(C, S, E, A, T, json, selftest)
             for i, p in ipairs(E.config.profiles) do if p.id == E.config.activeProfileId then return i end end
             return 1
         end
-        text("运行", "事件工坊 1.0.0 · 单人 · 原版 API")
+        text("运行", "事件工坊 1.0.1 · 单人 · 原版 API")
         boolean("运行", "本局运行规则", function() return E.ready and E.run and E.run.master end,
             function(value) T:setMaster(value) end,
             { "新局 / R 重开自动关闭；继续游戏保留状态。",

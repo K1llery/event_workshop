@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <metadata>
-  <name>Event Workshop - 事件工坊</name>
+  <name>Event Workshop</name>
   <directory>event_workshop</directory>
   <description>单人事件规则编辑器；原版 Lua API，无 REPENTOGON 依赖。通过 Mod Config Menu 或 ew 控制台命令配置。</description>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
+  <tag id="Lua"/>
 </metadata>

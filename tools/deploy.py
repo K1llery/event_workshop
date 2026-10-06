@@ -14,7 +14,8 @@ SOURCE = ROOT / "event_workshop"
 
 
 def build() -> Path:
-    archive = ROOT / "dist" / "event_workshop-1.0.0.zip"
+    version = ET.parse(SOURCE / "metadata.xml").findtext("version")
+    archive = ROOT / "dist" / f"event_workshop-{version}.zip"
     archive.parent.mkdir(exist_ok=True)
     with ZipFile(archive, "w", ZIP_DEFLATED) as output:
         for path in sorted(SOURCE.rglob("*")):
