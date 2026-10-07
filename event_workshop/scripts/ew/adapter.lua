@@ -1,5 +1,21 @@
 return function(C, S)
-    local A = { items = {}, snapshots = {}, maxItemId = 0 }
+    local text = include("scripts/ew/text")
+    local A = { items = {}, snapshots = {}, maxItemId = 0, catalog = C }
+    A.consoleText, A.consoleName, A.consoleJSON, A.consoleMachines = text.text, text.name, text.json, text.machines
+    A.consoleDecode = text.decode
+    function A.consoleLabel(category, row)
+        if not row[2]:find("[\128-\255]") then return row[2] end
+        if category == "machines" then return text.machines[row[1]] or "Machine" end
+        local enums = { enemies = EntityType, pools = ItemPoolType, pickups = PickupVariant }
+        local label
+        for name, id in pairs(enums[category] or {}) do
+            if id == row[1] and not name:find("^NUM_") and (not label or name < label) then label = name end
+        end
+        return label or (category .. " ID " .. tostring(row[1]))
+    end
+    function A.writeConsole(message)
+        Isaac.ConsoleOutput("[EventWorkshop] " .. text.text(message) .. "\n")
+    end
     function A.log(message)
         Isaac.DebugString("[EventWorkshop] " .. tostring(message))
     end
@@ -33,11 +49,12 @@ return function(C, S)
     function A.character(ctx) return ctx.player:GetPlayerType() end
     function A.hasCollectible(ctx, id) return ctx.player:HasCollectible(id) end
     function A.refreshItems()
-        A.items = {}
+        A.items, A.observedItems = {}, {}
         local config = Isaac.GetItemConfig()
         A.maxItemId = math.max(0, config:GetCollectibles().Size - 1)
         for id = 1, A.maxItemId do
             local item = config:GetCollectible(id)
+            if item then A.observedItems[#A.observedItems + 1] = { id = id } end
             if item and not item.Hidden then
                 A.items[#A.items + 1] = { id = id, name = item.Name or tostring(id), quality = item.Quality or 0 }
             end
@@ -115,12 +132,7 @@ return function(C, S)
         end
         error("在 64 次抽取内未找到满足品质的道具，跳过此次生成")
     end
-    local function position(ctx, enemy)
-        local room = Game():GetRoom()
-        if enemy then return room:FindFreeTilePosition(ctx.position, 40) end
-        return room:FindFreePickupSpawnPosition(ctx.position, 40, true)
-    end
-    function A.execute(action, ctx, engine)
+    function A.executeBase(action, ctx, engine)
         local player = ctx.player
         if not player or not player:Exists() then return end
         local kind = action.kind
@@ -128,9 +140,10 @@ return function(C, S)
             for _ = 1, math.max(1, math.min(32, action.amount)) do
                 local id = selectItem(action, engine)
                 if kind == "spawn_collectible" then
-                    Isaac.Spawn(5, 100, id, position(ctx), Vector.Zero, player)
+                    A.spawn(5, 100, id, A.position(action, ctx), Vector.Zero, player)
                 else
-                    player:AddCollectible(id, 0, true)
+                    A.consumeOperation()
+                    player:AddCollectible(id, 0, true, action.slot)
                 end
             end
         elseif kind == "spawn_pickup" then
@@ -150,7 +163,7 @@ return function(C, S)
                 error("饰品 ID 无效")
             end
             for _ = 1, math.max(1, math.min(32, action.amount)) do
-                Isaac.Spawn(5, action.pickupVariant, action.subtype, position(ctx), Vector.Zero, player)
+                A.spawn(5, action.pickupVariant, action.subtype, A.position(action, ctx), Vector.Zero, player)
             end
         elseif kind == "coins" then
             player:AddCoins(math.max(-player:GetNumCoins(), action.amount))
@@ -160,7 +173,8 @@ return function(C, S)
             player:AddBombs(math.max(-player:GetNumBombs(), action.amount))
         elseif kind == "hearts" then
             local funcs = { red = "AddHearts", soul = "AddSoulHearts", black = "AddBlackHearts",
-                max = "AddMaxHearts", bone = "AddBoneHearts", rotten = "AddRottenHearts" }
+                max = "AddMaxHearts", bone = "AddBoneHearts", rotten = "AddRottenHearts",
+                eternal = "AddEternalHearts", golden = "AddGoldenHearts", broken = "AddBrokenHearts" }
             local amount = math.max(-48, math.min(48, action.amount))
             if action.heartType == "max" then player:AddMaxHearts(amount, true)
             else player[funcs[action.heartType]](player, amount) end
@@ -186,9 +200,10 @@ return function(C, S)
             end
         elseif kind == "spawn_enemy" then
             for _ = 1, math.max(1, math.min(32, action.amount)) do
-                Isaac.Spawn(action.enemyType, 0, 0, position(ctx, true), Vector.Zero, nil)
+                A.spawn(action.enemyType, action.variant, action.subtype, A.position(action, ctx, true), Vector.Zero, nil)
             end
         end
     end
+    A.selectItem = selectItem
     return A
 end

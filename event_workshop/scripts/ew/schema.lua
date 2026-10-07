@@ -1,5 +1,5 @@
 return function(C)
-    local S = { VERSION = 1, MAX_RULES = 100, MAX_ACTIONS = 20, MAX_PROFILES = 20 }
+    local S = { VERSION = 2, MAX_RULES = 100, MAX_ACTIONS = 20, MAX_PROFILES = 20 }
     function S.copy(value)
         if type(value) ~= "table" then return value end
         local result = {}
@@ -20,21 +20,34 @@ return function(C)
         if length > 48 then return value:sub(1, utf8.offset(value, 49) - 1) end
         return value:gsub("[%c]", " ")
     end
+    function S.scalar(value, default, min, max)
+        local n = tonumber(value)
+        if not n or n ~= n or n == math.huge or n == -math.huge then n = default end
+        return math.max(min, math.min(max, n))
+    end
     function S.action(raw)
         raw = type(raw) == "table" and raw or {}
-        return {
-            kind = C.contains(C.actions, raw.kind) and raw.kind or "spawn_collectible",
-            amount = number(raw.amount, 1, -999, 999),
-            itemId = number(raw.itemId, 0, 0, 1000000),
-            pool = C.contains(C.pools, raw.pool) and raw.pool or 0,
-            qualityMin = number(raw.qualityMin, 0, 0, 4),
-            qualityMax = number(raw.qualityMax, 4, 0, 4),
-            pickupVariant = C.contains(C.pickups, raw.pickupVariant) and raw.pickupVariant or 20,
-            subtype = number(raw.subtype, 1, 0, 1000000),
-            heartType = C.contains(C.hearts, raw.heartType) and raw.heartType or "red",
-            slot = number(raw.slot, 0, 0, 3),
-            enemyType = C.contains(C.enemies, raw.enemyType) and raw.enemyType or 10,
-        }
+        local result = { kind = C.contains(C.actions, raw.kind) and raw.kind or "spawn_collectible" }
+        for key, field in pairs(C.fields) do
+            if field.list then
+                result[key] = C.contains(field.list, raw[key]) and raw[key] or field.default
+            elseif key == "message" then result[key] = text(raw[key], field.default)
+            else
+                local normalize = (key == "value" or key == "duration" or key == "angle"
+                    or key == "radius" or key == "red" or key == "green" or key == "blue") and S.scalar or number
+                local default = key == "subtype" and (raw.kind == "spawn_enemy" or raw.kind == "spawn_entity"
+                    or raw.kind == "spawn_familiar" or raw.kind == "spawn_machine" or raw.kind == "spawn_effect") and 0 or field.default
+                result[key] = normalize(raw[key], default, field.min, field.max)
+            end
+        end
+        return result
+    end
+    function S.filter(raw)
+        raw = type(raw) == "table" and raw or {}
+        return { field = C.contains(C.filterFields, raw.field) and raw.field or "coins",
+            op = C.contains(C.operators, raw.op) and raw.op or "ge",
+            value = S.scalar(raw.value, 0, -1000000000, 1000000000),
+            argument = number(raw.argument, 1, 0, 1000000), negate = raw.negate == true }
     end
     function S.conditions(raw)
         raw = type(raw) == "table" and raw or {}
@@ -45,6 +58,11 @@ return function(C)
             collectible = number(raw.collectible, 0, 0, 1000000),
             maxRoom = number(raw.maxRoom, 0, 0, 999), maxFloor = number(raw.maxFloor, 0, 0, 999),
             maxRun = number(raw.maxRun, 0, 0, 999),
+            matchMode = number(raw.matchMode, 0, 0, 1),
+            cooldownFrames = number(raw.cooldownFrames, 0, 0, 108000),
+            intervalFrames = number(raw.intervalFrames, 30, 1, 108000),
+            inputAction = number(raw.inputAction, 0, 0, 31),
+            randomAction = number(raw.randomAction, 0, 0, 1),
         }
     end
     function S.rule(raw, id)
@@ -52,7 +70,7 @@ return function(C)
         local result = {
             id = id, name = text(raw.name, "规则 " .. id), enabled = raw.enabled == true,
             event = C.contains(C.events, raw.event) and raw.event or "room_clear",
-            conditions = S.conditions(raw.conditions), actions = {},
+            conditions = S.conditions(raw.conditions), actions = {}, filters = {},
         }
         if type(raw.actions) == "table" then
             for _, action in ipairs(raw.actions) do
@@ -60,10 +78,18 @@ return function(C)
                 result.actions[#result.actions + 1] = S.action(action)
             end
         end
+        for _, filter in ipairs(type(raw.filters) == "table" and raw.filters or {}) do
+            if #result.filters >= 20 then break end
+            result.filters[#result.filters + 1] = S.filter(filter)
+        end
         if #result.actions == 0 then result.actions[1] = S.action() end
         return result
     end
     function S.preset(key, id)
+        if C.presetRules and C.presetRules[key] then
+            local template = S.copy(C.presetRules[key]); template.name = C.label(C.presets, key)
+            return S.rule(template, id)
+        end
         local rule = S.rule({}, id)
         rule.name = C.label(C.presets, key)
         if key == "no_clear_charge" then
@@ -105,6 +131,10 @@ return function(C)
                         while ruleIDs[rid] do rid = rid + 1 end
                         ruleIDs[rid] = true
                         result.nextRuleId = math.max(result.nextRuleId, rid + 1)
+                        if raw.schemaVersion == 1 then
+                            rule = S.copy(rule)
+                            for _, a in ipairs(rule.actions or {}) do if a.kind == "spawn_enemy" then a.subtype, a.variant = 0, 0 end end
+                        end
                         p.rules[#p.rules + 1] = S.rule(rule, rid)
                     end
                 end
@@ -124,9 +154,9 @@ return function(C)
         return config.profiles[1]
     end
     function S.validateImport(raw)
-        if type(raw) ~= "table" or raw.schemaVersion ~= S.VERSION or type(raw.profiles) ~= "table"
+        if type(raw) ~= "table" or (raw.schemaVersion ~= 1 and raw.schemaVersion ~= S.VERSION) or type(raw.profiles) ~= "table"
             or #raw.profiles == 0 or #raw.profiles > S.MAX_PROFILES then
-            return false, "请输入版本 1 的配置 JSON，包含 1–20 套方案"
+            return false, "请输入版本 1 或 2 的配置 JSON，包含 1–20 套方案"
         end
         for _, profile in ipairs(raw.profiles) do
             if type(profile) ~= "table" or type(profile.rules) ~= "table" or #profile.rules > S.MAX_RULES then
@@ -144,6 +174,18 @@ return function(C)
                 for key, value in pairs(rule.conditions or {}) do
                     if conditions[key] == nil or type(value) ~= "number" or conditions[key] ~= value then
                         return false, "条件字段或数值无效：" .. tostring(key)
+                    end
+                end
+                if rule.filters ~= nil then
+                    if type(rule.filters) ~= "table" or #rule.filters > 20 then return false, "最多 20 个扩展条件" end
+                    for _, filter in ipairs(rule.filters) do
+                        if type(filter) ~= "table" then return false, "扩展条件必须为对象" end
+                        local normalized = S.filter(filter)
+                        for key, value in pairs(filter) do
+                            if normalized[key] == nil or normalized[key] ~= value then
+                                return false, "扩展条件字段无效：" .. tostring(key)
+                            end
+                        end
                     end
                 end
                 for _, action in ipairs(rule.actions) do

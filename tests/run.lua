@@ -5,3 +5,5 @@ local makeEngine = dofile(root .. "scripts/ew/engine.lua")
 local test = dofile(root .. "scripts/ew/selftest.lua")(C, S, makeEngine)
 print("规则引擎自检通过：" .. test() .. " 项")
 dofile("tests/integration.lua")
+
+dofile("tests/expansion.lua")

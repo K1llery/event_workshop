@@ -27,9 +27,11 @@ return function(mod, json, C, S, E, A)
         end)
         if not ok then self.status = "保存失败，请查看游戏日志"; A.log(result); return false end
         self.pendingSave = false
+        self.lastSaveFrame = A.frame and A.frame() or 0
         return true
     end
     function T:changed(message)
+        if A.invalidateListeners then A.invalidateListeners() end
         self.corruptSave = false
         self.status = message or "配置已保存"
         self:save()
@@ -63,6 +65,9 @@ return function(mod, json, C, S, E, A)
         local id = E.config.nextRuleId
         E.config.nextRuleId = id + 1
         local rule = S.rule(S.copy(source), id)
+        for _, action in ipairs(rule.actions) do
+            if action.kind == "rule_switch" and action.ruleId == source.id then action.ruleId = id end
+        end
         rule.name, rule.enabled = S.rule({ name = source.name .. " 副本" }, id).name, false
         table.insert(self:profile().rules, rule)
         self.selectedRule, self.selectedAction = #self:profile().rules, 1
@@ -100,6 +105,13 @@ return function(mod, json, C, S, E, A)
         self.selectedAction = to
         self:changed("动作顺序已调整")
     end
+    local function remapSwitches(rules, ids)
+        for _, rule in ipairs(rules) do
+            for _, action in ipairs(rule.actions) do
+                if action.kind == "rule_switch" and ids[action.ruleId] then action.ruleId = ids[action.ruleId] end
+            end
+        end
+    end
     function T:newProfile(copy)
         if #E.config.profiles >= S.MAX_PROFILES then self.status = "最多 20 套方案"; return end
         local source = self:profile()
@@ -108,10 +120,13 @@ return function(mod, json, C, S, E, A)
         local profile = { id = pid, name = "方案 " .. pid, rules = {} }
         if copy then
             profile.name = source.name .. " 副本"
+            local ids = {}
             for _, rule in ipairs(source.rules) do
+                ids[rule.id] = E.config.nextRuleId
                 profile.rules[#profile.rules + 1] = S.rule(rule, E.config.nextRuleId)
                 E.config.nextRuleId = E.config.nextRuleId + 1
             end
+            remapSwitches(profile.rules, ids)
         end
         table.insert(E.config.profiles, profile)
         self:switchProfile(#E.config.profiles)
@@ -122,7 +137,7 @@ return function(mod, json, C, S, E, A)
         if not profile then return end
         E.config.activeProfileId = profile.id
         self.selectedRule, self.selectedAction = 1, 1
-        if E.run then E.run.master = false end
+        if E.run then E.run.master, E.run.scheduled = false, {} end
         self:changed("方案已切换；请手动打开总开关")
     end
     function T:deleteProfile()
@@ -140,6 +155,7 @@ return function(mod, json, C, S, E, A)
     end
     function T:setMaster(value)
         if not A.isSinglePlayer() then self.status = "第一版仅支持单人游戏"; return end
+        if A.baseline then A.baseline() end
         local ok, err = E:setMaster(value, A.context())
         if ok then self:changed(value and "本局已启用" or "本局已停用")
         else self.status = err end
@@ -148,15 +164,20 @@ return function(mod, json, C, S, E, A)
         local valid, errorMessage = S.validateImport(raw)
         if not valid then return false, errorMessage end
         self.readOnly = false
+        local previousNextId = E.config.nextRuleId
         E.config = S.config(raw)
         -- 导入时重分配 ID，避免新规则复用本局旧规则的计数。
-        local nextId = 1
+        local nextId = math.max(previousNextId, E.config.nextRuleId)
         for _, p in ipairs(E.config.profiles) do
-            for _, rule in ipairs(p.rules) do rule.id = nextId; nextId = nextId + 1 end
+            local ids = {}
+            for _, rule in ipairs(p.rules) do
+                ids[rule.id] = nextId; rule.id = nextId; nextId = nextId + 1
+            end
+            remapSwitches(p.rules, ids)
         end
         E.config.nextRuleId = nextId
         self.selectedRule, self.selectedAction = 1, 1
-        if E.run then E.run.master, E.run.counters = false, {} end
+        if E.run then E.run.master, E.run.counters, E.run.scheduled = false, {}, {} end
         self:changed("配置已导入；总开关已关闭")
         return true
     end

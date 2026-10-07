@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +15,29 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "event_workshop"
+
+
+def backup_install(game_dir: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup = ROOT / "dist" / "backups" / f"event_workshop-{stamp}"
+    for relative in (Path("mods/event_workshop"), Path("data/event_workshop")):
+        previous = game_dir / relative
+        if previous.exists():
+            shutil.copytree(previous, backup / relative)
+    backup.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        str(path.relative_to(backup)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(backup.rglob("*")) if path.is_file()
+    }
+    (backup / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (backup / "恢复说明.txt").write_text(
+        "完整退出游戏，再将 mods/event_workshop 和 data/event_workshop 中的文件"
+        "分别覆盖回游戏同名目录。恢复存档会撤销备份之后的模组配置与运行记录。\n",
+        encoding="utf-8",
+    )
+    return backup
 
 
 def build() -> Path:
@@ -28,6 +54,12 @@ def build() -> Path:
             if path.is_file():
                 output.write(path, path.relative_to(ROOT))
         output.write(ROOT / "docs" / "使用说明.md", "使用说明.md")
+        coverage = ROOT / "docs" / "覆盖清单.md"
+        if coverage.is_file():
+            output.write(coverage, "覆盖清单.md")
+        validation = ROOT / "docs" / "验证记录.md"
+        if validation.is_file():
+            output.write(validation, "验证记录.md")
     return archive
 
 
@@ -44,14 +76,19 @@ def main() -> None:
         if not (args.game_dir / "isaac-ng.exe").is_file():
             parser.error("游戏目录不存在或缺少 isaac-ng.exe")
         target = args.game_dir / "mods" / "event_workshop"
+        preserve_metadata = target.exists()
         if target.exists():
             metadata = target / "metadata.xml"
             if not metadata.is_file() or ET.parse(metadata).findtext("directory") != "event_workshop":
                 parser.error("目标目录已有其他内容，停止覆盖")
+        # 备份失败直接中止；保留已安装的启用信息和 Steam 写入的工坊关联。
+        print(f"部署前备份：{backup_install(args.game_dir)}")
         target.mkdir(parents=True, exist_ok=True)
         count = 0
         for path in sorted(SOURCE.rglob("*")):
             if path.is_file():
+                if preserve_metadata and path.name == "metadata.xml":
+                    continue
                 dest = target / path.relative_to(SOURCE)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)

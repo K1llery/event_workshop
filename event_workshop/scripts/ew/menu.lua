@@ -1,5 +1,6 @@
 return function(C, S, E, A, T, json, selftest)
-    local M = { installed = nil, query = "", results = {}, resultIndex = 1, charIndex = 1, presetIndex = 1 }
+    local M = { installed = nil, query = "", results = {}, resultIndex = 1, charIndex = 1, presetIndex = 1, parameterIndex = 1, filterIndex = 1,
+        conditionParameter = 1, contentGroup = "enemies", contentIndex = 1 }
     local category = "事件工坊 Event Workshop"
     local alphabet = "abcdefghijklmnopqrstuvwxyz0123456789 -_'"
     -- MCM 中文字体缺少全角标点；仅转换显示文本，不修改玩家保存的名称。
@@ -58,17 +59,20 @@ return function(C, S, E, A, T, json, selftest)
         local function number(tab, label, get, set, min, max, info, display)
             local options = { Type = types.NUMBER, Minimum = min, Maximum = 1, Info = info }
             options.CurrentSetting = function()
-                options.Maximum = math.max(min, type(max) == "function" and max() or max)
-                return math.max(min, math.min(options.Maximum, get() or min))
+                options.Minimum = type(min) == "function" and min() or min
+                options.Maximum = math.max(options.Minimum, type(max) == "function" and max() or max)
+                return math.max(options.Minimum, math.min(options.Maximum, get() or options.Minimum))
             end
             options.Display = display or function() return label .. "：" .. tostring(get() or min) end
             options.OnChange = set
             setting(tab, options)
+            return options
         end
         local function choice(tab, label, list, get, set, info)
-            number(tab, label, function() return C.index(list, get()) end,
-                function(n) set(list[n][1]) end, 1, #list, info,
-                function() return label .. "：" .. C.label(list, get()) end)
+            local function rows() return type(list) == "function" and list() or list end
+            number(tab, label, function() return C.index(rows(), get()) end,
+                function(n) local row = rows()[n]; if row then set(row[1]) end end, 1, function() return #rows() end, info,
+                function() return label .. "：" .. C.label(rows(), get()) end)
         end
         local function ruleField(key, value)
             local rule = selectedRule()
@@ -110,7 +114,7 @@ return function(C, S, E, A, T, json, selftest)
         button("运行", "运行自检（不改变本局）", function()
             local ok, result = pcall(selftest)
             T.status = ok and ("自检通过：" .. tostring(result) .. " 项") or ("自检失败：" .. tostring(result))
-            Isaac.ConsoleOutput("[事件工坊] " .. T.status .. "\n")
+            A.writeConsole(ok and ("Self-test passed: " .. tostring(result) .. " checks.") or "Self-test FAILED; see log.txt.")
             A.log(T.status)
         end, "只测试隔离的规则逻辑，不修改当前局、种子、资源或配置。")
 
@@ -131,12 +135,26 @@ return function(C, S, E, A, T, json, selftest)
             "确定删除当前规则？$newline$按确认键删除，返回键取消。")
         space("规则")
         text("规则", "重命名：控制台 lua EW('rename ID 名称')")
+        text("规则", function()
+            local r = selectedRule()
+            return r and (C.label(C.events, r.event) .. " -> " .. C.label(C.actions, r.actions[1].kind)
+                .. (#r.actions > 1 and (" 等 " .. #r.actions .. " 个动作") or "")) or ""
+        end)
 
         text("条件", function() local r = selectedRule(); return r and ("当前规则：" .. r.name) or "请先添加规则" end)
-        choice("条件", "触发事件", C.events, function() local r = selectedRule(); return r and r.event end,
+        choice("条件", "事件分类", C.eventGroups,
+            function() local r = selectedRule(); return r and C.eventInfo[r.event].group or "progress" end,
+            function(v) local list = C.grouped(C.events, C.eventInfo, v); ruleField("event", list[1][1]) end)
+        choice("条件", "触发事件", function()
+            local r = selectedRule(); return C.grouped(C.events, C.eventInfo, r and C.eventInfo[r.event].group or "progress")
+        end, function() local r = selectedRule(); return r and r.event end,
             function(v) ruleField("event", v) end, "先选择事件，再设置下面的筛选条件。")
         space("条件")
-        text("条件", "以下条件须同时满足")
+        text("条件", function() local r = selectedRule(); return r and ("检测方式: " .. C.eventInfo[r.event].detection) or "" end)
+        choice("条件", "筛选组合", { { 0, "全部满足" }, { 1, "任一满足" } },
+            function() local r = selectedRule(); return r and r.conditions.matchMode or 0 end,
+            function(v) conditionField("matchMode", v) end,
+            "组合房间、角色、持有道具和扩展筛选；概率、间隔、冷却和次数上限始终必须满足。")
         local function conditionNumber(key, label, min, max, info, display)
             number("条件", label, function() local r = selectedRule(); return r and r.conditions[key] or min end,
                 function(v) conditionField(key, v) end, min, max, info, display)
@@ -173,52 +191,126 @@ return function(C, S, E, A, T, json, selftest)
         limit("maxFloor", "每层上限", "0 表示不限；进入下一层重新计数。")
         limit("maxRun", "每局上限", "0 表示不限；开关、继续游戏都不会清空次数，新局重新计数。")
 
-        text("动作", "多个动作依次执行；选中动作后修改参数")
+        conditionNumber("cooldownFrames", "冷却帧数 (30 帧 = 1 秒)", 0, 108000)
+        conditionNumber("intervalFrames", "定时 / 持续条件帧数", 1, 108000, "仅时间分类事件使用，30 帧 = 1 秒。")
+        choice("条件", "监听游戏操作", C.buttons, function() local r = selectedRule(); return r and r.conditions.inputAction or 0 end,
+            function(v) conditionField("inputAction", v) end, "仅按下 / 松开事件使用。")
+        local function filter() local r = selectedRule(); return r and r.filters[math.min(self.filterIndex, #r.filters)] end
+        local function changeFilter(key, value) local f = filter(); if f then f[key] = value; T:changed() end end
+        space("条件")
+        number("条件", "选择扩展筛选", function() return self.filterIndex end, function(v) self.filterIndex = v end,
+            1, function() local r = selectedRule(); return r and #r.filters or 1 end, nil,
+            function() local r = selectedRule(); return "扩展筛选: " .. self.filterIndex .. "/" .. (r and #r.filters or 0) end)
+        choice("条件", "筛选数值", C.filterFields, function() local f = filter(); return f and f.field or "coins" end,
+            function(v) changeFilter("field", v) end)
+        choice("条件", "比较方式", C.operators, function() local f = filter(); return f and f.op or "ge" end,
+            function(v) changeFilter("op", v) end)
+        local fv = number("条件", "阈值", function() local f = filter(); return f and f.value or 0 end,
+            function(v) changeFilter("value", v) end, -1000000000, 1000000000)
+        fv.ModifyBy = 0.1
+        number("条件", "筛选参数 ID", function() local f = filter(); return f and f.argument or 1 end,
+            function(v) changeFilter("argument", v) end, 0, 1000000,
+            "指定道具数量、饰品倍数、变身、自定义计数器筛选使用的 ID；其他筛选忽略。")
+        boolean("条件", "此项取反", function() local f = filter(); return f and f.negate end,
+            function(v) changeFilter("negate", v) end)
+        button("条件", "添加扩展筛选", function()
+            local r = selectedRule(); if r and #r.filters < 20 then r.filters[#r.filters + 1] = S.filter(); self.filterIndex = #r.filters; T:changed() end
+        end)
+        button("条件", "删除扩展筛选", function()
+            local r = selectedRule(); if r and #r.filters > 0 then table.remove(r.filters, math.min(self.filterIndex, #r.filters)); self.filterIndex = 1; T:changed() end
+        end)
+
+        text("动作", "选中动作后选择参数，界面只提供该动作的字段")
         number("动作", "选择动作", function() return T.selectedAction end,
-            function(n) T.selectedAction = n end,
+            function(n) T.selectedAction, self.parameterIndex = n, 1 end,
             1, function() local r = selectedRule(); return r and #r.actions or 1 end, nil,
             function()
                 local a, r = selectedAction(), selectedRule()
                 return a and ("动作 " .. T.selectedAction .. "/" .. #r.actions .. "：" .. C.label(C.actions, a.kind)) or "请先添加规则"
             end)
-        choice("动作", "动作类型", C.actions, function() local a = selectedAction(); return a and a.kind end,
-            function(v) actionField("kind", v) end)
-        space("动作")
-        local function actionNumber(key, label, min, max, info, display)
-            number("动作", label, function() local a = selectedAction(); return a and a[key] or min end,
-                function(v) actionField(key, v) end, min, max, info, display)
+        choice("动作", "动作分类", C.actionGroups,
+            function() local a = selectedAction(); return a and C.actionInfo[a.kind].group or "spawn" end,
+            function(v) local list = C.grouped(C.actions, C.actionInfo, v); actionField("kind", list[1][1]); self.parameterIndex = 1 end)
+        choice("动作", "动作类型", function()
+            local a = selectedAction(); return C.grouped(C.actions, C.actionInfo, a and C.actionInfo[a.kind].group or "spawn")
+        end, function() local a = selectedAction(); return a and a.kind end,
+            function(v) actionField("kind", v); self.parameterIndex = 1 end)
+        text("动作", function()
+            local a = selectedAction()
+            return a and C.actionHelp[a.kind] or ""
+        end)
+        choice("动作", "动作执行方式", { { 0, "依次执行全部" }, { 1, "随机选择一个" } },
+            function() local r = selectedRule(); return r and r.conditions.randomAction or 0 end,
+            function(v) conditionField("randomAction", v) end)
+        local function fields()
+            local a, result = selectedAction(), {}
+            for _, key in ipairs(a and C.actionInfo[a.kind].fields or {}) do result[#result + 1] = key end
+            for _, key in ipairs({ "delayFrames", "repeatCount", "repeatFrames" }) do result[#result + 1] = key end
+            return result
         end
-        actionNumber("amount", "数量 / 增减值", -999, 999,
-            { "生成 / 给予类：1–32 个；生命调整：-48–48。",
-                "红心、魂心、黑心及容器以半颗为单位；骨心、腐心以整颗为单位。" })
+        local function fieldKey()
+            local list = fields(); self.parameterIndex = math.min(self.parameterIndex, #list); return list[self.parameterIndex]
+        end
         space("动作")
-        actionNumber("itemId", "道具 ID", 0, function() return A.maxItemId end,
-            "设为 0 表示随机；仅底座和直接给予动作使用，道具页面可按名称搜索。",
-            function() local a = selectedAction(); local id = a and a.itemId or 0
-                return "道具 ID：" .. (id == 0 and "随机" or tostring(id)) end)
-        text("动作", function() local a = selectedAction(); return "道具：" .. A.itemName(a and a.itemId or 0) end)
-        choice("动作", "随机道具池", C.pools, function() local a = selectedAction(); return a and a.pool or 0 end,
-            function(v) actionField("pool", v) end, "仅随机道具使用；受游戏原有角色及道具池机制影响。")
-        actionNumber("qualityMin", "最低品质", 0, 4)
-        actionNumber("qualityMax", "最高品质", 0, 4, "反向设置时自动按较小值到较大值筛选。")
+        number("动作", "选择参数", function() return self.parameterIndex end, function(v) self.parameterIndex = v end,
+            1, function() return #fields() end, nil,
+            function() local key = fieldKey(); return "参数 " .. self.parameterIndex .. "/" .. #fields() .. ": " .. C.fields[key].label end)
+        local parameterOptions
+        parameterOptions = number("动作", "参数值", function()
+            local key, a = fieldKey(), selectedAction()
+            local f = C.fields[key]
+            if parameterOptions then parameterOptions.ModifyBy = (key == "value" or key == "duration" or key == "red" or key == "green" or key == "blue") and 0.1 or 1 end
+            if f.list then return C.index(f.list, a and a[key] or f.default) end
+            if key == "message" then return 0 end
+            return a and a[key] or f.default
+        end, function(value)
+            local key, f = fieldKey(), C.fields[fieldKey()]
+            if f.list then value = f.list[value][1] elseif key == "message" then return end
+            actionField(key, value)
+        end, function() local f = C.fields[fieldKey()]; return f.list and 1 or f.min or 0 end,
+            function() local f = C.fields[fieldKey()]; return f.list and #f.list or f.max or 0 end,
+            "选择参数后左右键修改；小数步长 0.1。提示文字使用 lua EW('action ID 序号 message 文字') 编辑。",
+            function()
+                local key, a = fieldKey(), selectedAction(); local f = C.fields[key]
+                local value = a and a[key] or f.default
+                return f.label .. ": " .. (f.list and C.label(f.list, value) or tostring(value))
+            end)
+        text("动作", function()
+            local a = selectedAction()
+            return a and a.itemId > 0 and ("物品字段 ID: " .. a.itemId) or ""
+        end)
         space("动作")
-        choice("动作", "掉落物类型", C.pickups, function() local a = selectedAction(); return a and a.pickupVariant or 20 end,
-            function(v) actionField("pickupVariant", v) end, "仅生成掉落物动作使用。")
-        actionNumber("subtype", "掉落物子类型 / ID", 0, 1000000,
-            "普通金币、钥匙、炸弹、红心使用 1；0 表示随机。卡牌、饰品填写对应 ID。")
-        space("动作")
-        choice("动作", "生命类型", C.hearts, function() local a = selectedAction(); return a and a.heartType or "red" end,
-            function(v) actionField("heartType", v) end)
-        choice("动作", "充能槽位", C.slots, function() local a = selectedAction(); return a and a.slot or 0 end,
-            function(v) actionField("slot", v) end, "普通调整充能使用；抵消清房充能自动检查所有普通主动槽位。")
-        choice("动作", "敌人类型", C.enemies, function() local a = selectedAction(); return a and a.enemyType or 10 end,
-            function(v) actionField("enemyType", v) end, "仅生成敌人动作使用；第一版提供已知原版敌人。")
-        space("动作")
-        button("动作", "添加动作", function() T:addAction() end)
+        button("动作", "添加动作", function() T:addAction(); self.parameterIndex = 1 end)
         button("动作", "当前动作上移", function() T:moveAction(-1) end)
         button("动作", "当前动作下移", function() T:moveAction(1) end)
-        button("动作", "删除当前动作", function() T:deleteAction() end, nil,
+        button("动作", "删除当前动作", function() T:deleteAction(); self.parameterIndex = 1 end, nil,
             "确定删除当前动作？$newline$至少保留一个动作。")
+
+        text("记录", "规则连锁允许；同一链中每条规则最多执行一次")
+        text("记录", "每帧最多 128 个事件 / 256 个动作；每链最多 32 条规则")
+        for index = 1, 12 do
+            local offset = index
+            text("记录", function() return E.history[math.max(0, #E.history - 12) + offset] or "" end)
+        end
+        button("记录", "清空显示记录", function() E.history = {} end)
+
+        choice("目录", "内容分类", C.contentGroups, function() return self.contentGroup end,
+            function(v) self.contentGroup, self.contentIndex = v, 1 end)
+        number("目录", "浏览内容", function() return self.contentIndex end, function(v) self.contentIndex = v end,
+            1, function() return #C.content[self.contentGroup] end, nil,
+            function() local row = C.content[self.contentGroup][self.contentIndex]; return row and ("#" .. row[1] .. " " .. row[2]) or "无内容" end)
+        button("目录", function() return self.contentGroup == "callbacks" and "用于当前规则的原版通知筛选" or "用于当前动作的对应字段" end, function()
+            local row = C.content[self.contentGroup][self.contentIndex]
+            if row and self.contentGroup == "callbacks" then
+                local r = selectedRule()
+                if r and #r.filters < 20 then
+                    r.event = "native_callback"
+                    r.filters[#r.filters + 1] = S.filter({ field = "callbackId", op = "eq", value = row[1] })
+                    T:changed()
+                end
+            elseif row then actionField(C.contentFields[self.contentGroup], row[1]) end
+        end)
+        text("目录", "子类型和具体实体变体可在动作参数中填写")
 
         text("道具", "名称搜索：字符拼写或控制台输入")
         text("道具", "lua EW('search 名称')")
@@ -258,7 +350,7 @@ return function(C, S, E, A, T, json, selftest)
         space("预设")
         button("预设", "导出配置到控制台 / 日志", function()
             local output = json.encode(E.config)
-            Isaac.ConsoleOutput(output .. "\n")
+            Isaac.ConsoleOutput(A.consoleJSON(output) .. "\n")
             A.log("EXPORT " .. output)
             T.status = "已导出；使用 lua EW([[import JSON]]) 导入"
         end)
